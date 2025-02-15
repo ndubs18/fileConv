@@ -21,6 +21,6 @@ module.exports = {
 		}),
 	],
 	resolve: {
-		extensions: ['.tsx', '.ts'], // Enable importing .js and .jsx files without specifying extensions
+		extensions: ['.tsx', '.ts', '.js'], // Enable importing .js and .jsx files without specifying extensions
 	},
 };
