@@ -10,7 +10,8 @@ import mongoose from 'mongoose'
 import Document from './database/models/document.js'
 import fs from 'node:fs'
 import Readable from 'node:stream'
-
+import libre from 'libreoffice-convert'
+import { pipeline } from 'stream/promises'
 import { Queue, Worker } from 'bullmq'
 const conversionQueue = new Queue('conversion-queue');
 
@@ -108,9 +109,8 @@ const uploadFile = async (url: string, fileStream: Buffer) => {
 
 const worker = new Worker('conversion-queue', async job => {
 	const { uuid, filename } = job.data;
-	const tempInputPath = path.join(`/tmp`, filename);
-	const tempOutputPath = path.join(`/tmp`, `${uuid}.pdf`);
-
+	const tempInputPath = path.join(`${__dirname}/temp`, filename);
+	const tempOutputPath = path.join(`${__dirname}/temp`, `${uuid}.pdf`);
 	const s3 = new S3Client({
 		region: 'us-west-1',
 		credentials: {
@@ -128,12 +128,56 @@ const worker = new Worker('conversion-queue', async job => {
 	const response = await s3.send(getObjectCommand);
 	const localWriteStream = fs.createWriteStream(tempInputPath);
 	if (response.Body instanceof Readable) {
-		response.Body.pipe(localWriteStream);
+		await pipeline(response.Body, localWriteStream);
+		//await response.Body.pipe(localWriteStream);
+		try {
+			const fileBuf = await fs.promises.readFile(tempInputPath);
+			//TODO: Let's wrap this callback in a promise
+			libre.convert(fileBuf, '.pdf', undefined, async (error, newFile) => {
+				if (error) {
+					console.log(error);
+					return;
+				}
+				fs.writeFile(tempOutputPath, newFile, err => {
+					if (err) {
+						console.log(err);
+					}
+				})
+				let toUpload = await fs.promises.readFile(tempOutputPath);
+
+				const url = await generatePresignedUrl(s3, `converted/${uuid}.pdf`, 'application/pdf');
+				const pushObject = await uploadFile(url, toUpload)
+			})
+			/*
+						fs.unlinkSync(tempInputPath);
+						fs.unlinkSync(tempOutputPath);
+			*/
+		} catch (error) {
+			console.log(error)
+		}
+
+		/*
+				const fileBuf = fs.readFile(tempInputPath, (err, fileBuf) => {
+					console.log(typeof fileBuf + '\n' + fileBuf)
+					let pdfBuf = libre.convert(fileBuf, '.pdf', undefined, async (err, newFile) => {
+						console.log(typeof newFile + '\npost conversion:' + newFile);
+						fs.writeFile(tempOutputPath, newFile, err => {
+							if (err) {
+								console.log(err);
+							}
+						})
+						const url = await generatePresignedUrl(s3, uuid, 'application/pdf');
+						const pushObject = await uploadFile(url, newFile)
+					})
+				});
+				*/
 		console.log('body is instance of readable');
 	}
 	else {
 		console.log('body is not instance of readable');
 	}
+
+
 },
 	{
 		connection: {
