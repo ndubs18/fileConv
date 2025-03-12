@@ -22,7 +22,6 @@ import {
 
 let app = express();
 app.use(cors());
-app.use(express.json());
 
 const __dirname = path.resolve();
 
@@ -30,6 +29,7 @@ const __dirname = path.resolve();
 const storage = multer.memoryStorage()
 const upload = multer({ storage: storage })
 
+app.use(express.json());
 //aws
 const PORT: string = process.env.PORT;
 const ACCESS_KEY = process.env.ACCESS_KEY;
@@ -52,24 +52,26 @@ app.post('/upload', upload.single('file'), async (req: Request, res: Response) =
 			secretAccessKey: SECRET_ACCESS_KEY
 		}
 	});
+
 	const { originalname, mimetype } = req.file;
 	//generate uuid
 	const ext = path.extname(originalname);
 	const uuid = `${v4()}${ext}`;
 	const fileStream = req.file.buffer;
 	try {
-		const url = await generatePresignedUrl(s3, uuid, mimetype);
+		const url = await generatePresignedUrl(s3, uuid);
 		const pushObject = await uploadFile(url, fileStream)
 		res.status(200).json({
 			status: "success",
 			data: {
-				uuid: uuid, filename: originalname, sourceExt: ext
+				uuid: uuid, filename: originalname, sourceExt: ext, targetExt: req.body.targetType
 			},
 			message: null
 		})
 	} catch (error) {
 		res.status(500).json({ error: error });
 	}
+
 })
 
 app.post('/process', async (req, res) => {
@@ -87,20 +89,19 @@ app.post('/process', async (req, res) => {
 	})
 })
 
-
-
-const generatePresignedUrl = (s3: S3Client, uuid: string, type: string) => {
-	const command = new PutObjectCommand({ Bucket: BUCKETNAME, Key: uuid, ContentType: type });
+//TODO: We can change this name bc this specifically makes one for a put command
+const generatePresignedUrl = (s3: S3Client, uuid: string) => {
+	const command = new PutObjectCommand({ Bucket: BUCKETNAME, Key: uuid });
 	return getSignedUrl(s3, command, { expiresIn: 1800 });
 }
 
 const uploadFile = async (url: string, fileStream: Buffer) => {
 	try {
-		const uploadObject = await fetch(url, {
+		const response = await fetch(url, {
 			method: 'PUT',
-			body: fileStream
+			body: fileStream,
 		})
-		return uploadObject;
+		return response;
 
 	} catch (error) {
 		return error;
@@ -108,13 +109,13 @@ const uploadFile = async (url: string, fileStream: Buffer) => {
 }
 
 const worker = new Worker('conversion-queue', async job => {
-	const { uuid, filename, sourceExt } = job.data;
+	const { uuid, filename, sourceExt, targetExt } = job.data;
 
 	const trimmedUuid = uuid.substr(0, uuid.length - sourceExt.length);
 
 
 	const tempInputPath = path.join(`${__dirname}/temp`, filename);
-	const tempOutputPath = path.join(`${__dirname}/temp`, `${trimmedUuid}.pdf`);
+	const tempOutputPath = path.join(`${__dirname}/temp`, `${trimmedUuid}${targetExt}`);
 	const s3 = new S3Client({
 		region: 'us-west-1',
 		credentials: {
@@ -127,27 +128,30 @@ const worker = new Worker('conversion-queue', async job => {
 		Bucket: BUCKETNAME,
 		Key: uuid
 	})
-
-
 	const response = await s3.send(getObjectCommand);
 	const localWriteStream = fs.createWriteStream(tempInputPath);
 	if (response.Body instanceof Readable) {
 		await pipeline(response.Body, localWriteStream);
 		try {
 			const fileBuf = await fs.promises.readFile(tempInputPath);
+
 			//TODO: Let's wrap this callback in a promise
-			libre.convert(fileBuf, '.pdf', undefined, async (error, newFile) => {
+			libre.convert(fileBuf, targetExt, undefined, async (error, newFile) => {
 				if (error) {
 					console.log(error);
 					return;
 				}
 				await fs.promises.writeFile(tempOutputPath, newFile)
-				let toUpload = await fs.promises.readFile(tempOutputPath);
-				const url = await generatePresignedUrl(s3, `converted/${trimmedUuid}.pdf`, 'application/pdf');
-				const pushObject = await uploadFile(url, toUpload)
+				const toUpload = await fs.promises.readFile(tempOutputPath);
+				const url = await generatePresignedUrl(s3, `converted/${trimmedUuid}${targetExt}`);
+				const putObject = await uploadFile(url, toUpload)
+				const getConvertedObject = new GetObjectCommand({
+					Bucket: BUCKETNAME,
+					Key: `converted/${trimmedUuid}${targetExt}`
+				})
+				const getConvertedObectUrl = await getSignedUrl(s3, getConvertedObject)
 
-				//TODO: We need to get the download url for converted url
-				await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: 'swag' })
+				await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: getConvertedObectUrl })
 			})
 			//remove files from local file system
 			await fs.promises.unlink(tempInputPath);

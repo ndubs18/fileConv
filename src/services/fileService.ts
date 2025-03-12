@@ -1,3 +1,9 @@
+type FileData = {
+	uuid: string,
+	filename: string,
+	sourceExt: string,
+	targetExt: string
+}
 export class FileService {
 
 	async uploadToS3(file: FormData) {
@@ -15,12 +21,21 @@ export class FileService {
 
 	}
 
-	async processFile(uuid: string, filename: string) {
-		console.log(uuid);
+	async processFile(data: FileData) {
+		//TODO: Can we just set the state object and stringify it in request body??
+		//
+		console.log(data);
+		const { uuid, filename, sourceExt, targetExt } = data;
+
 		const response = await fetch('http://localhost:3000/process',
 			{
 				method: 'POST',
-				body: JSON.stringify({ uuid: uuid, filename: filename }),
+				body: JSON.stringify({
+					uuid: uuid,
+					filename: filename,
+					sourceExt: sourceExt,
+					targetExt: targetExt
+				}),
 				headers: {
 					'Content-type': 'application/json'
 
