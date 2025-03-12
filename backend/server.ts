@@ -52,7 +52,7 @@ app.post('/upload', upload.single('file'), async (req: Request, res: Response) =
 			secretAccessKey: SECRET_ACCESS_KEY
 		}
 	});
-	const { originalname, mimetype, size } = req.file;
+	const { originalname, mimetype } = req.file;
 	//generate uuid
 	const ext = path.extname(originalname);
 	const uuid = `${v4()}${ext}`;
@@ -63,7 +63,7 @@ app.post('/upload', upload.single('file'), async (req: Request, res: Response) =
 		res.status(200).json({
 			status: "success",
 			data: {
-				uuid: uuid, filename: originalname
+				uuid: uuid, filename: originalname, sourceExt: ext
 			},
 			message: null
 		})
@@ -108,9 +108,13 @@ const uploadFile = async (url: string, fileStream: Buffer) => {
 }
 
 const worker = new Worker('conversion-queue', async job => {
-	const { uuid, filename } = job.data;
+	const { uuid, filename, sourceExt } = job.data;
+
+	const trimmedUuid = uuid.substr(0, uuid.length - sourceExt.length);
+
+
 	const tempInputPath = path.join(`${__dirname}/temp`, filename);
-	const tempOutputPath = path.join(`${__dirname}/temp`, `${uuid}.pdf`);
+	const tempOutputPath = path.join(`${__dirname}/temp`, `${trimmedUuid}.pdf`);
 	const s3 = new S3Client({
 		region: 'us-west-1',
 		credentials: {
@@ -129,7 +133,6 @@ const worker = new Worker('conversion-queue', async job => {
 	const localWriteStream = fs.createWriteStream(tempInputPath);
 	if (response.Body instanceof Readable) {
 		await pipeline(response.Body, localWriteStream);
-		//await response.Body.pipe(localWriteStream);
 		try {
 			const fileBuf = await fs.promises.readFile(tempInputPath);
 			//TODO: Let's wrap this callback in a promise
@@ -138,46 +141,25 @@ const worker = new Worker('conversion-queue', async job => {
 					console.log(error);
 					return;
 				}
-				fs.writeFile(tempOutputPath, newFile, err => {
-					if (err) {
-						console.log(err);
-					}
-				})
+				await fs.promises.writeFile(tempOutputPath, newFile)
 				let toUpload = await fs.promises.readFile(tempOutputPath);
-
-				const url = await generatePresignedUrl(s3, `converted/${uuid}.pdf`, 'application/pdf');
+				const url = await generatePresignedUrl(s3, `converted/${trimmedUuid}.pdf`, 'application/pdf');
 				const pushObject = await uploadFile(url, toUpload)
+
+				//TODO: We need to get the download url for converted url
+				await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: 'swag' })
 			})
-			/*
-						fs.unlinkSync(tempInputPath);
-						fs.unlinkSync(tempOutputPath);
-			*/
+			//remove files from local file system
+			await fs.promises.unlink(tempInputPath);
+			await fs.promises.unlink(tempOutputPath);
 		} catch (error) {
 			console.log(error)
 		}
 
-		/*
-				const fileBuf = fs.readFile(tempInputPath, (err, fileBuf) => {
-					console.log(typeof fileBuf + '\n' + fileBuf)
-					let pdfBuf = libre.convert(fileBuf, '.pdf', undefined, async (err, newFile) => {
-						console.log(typeof newFile + '\npost conversion:' + newFile);
-						fs.writeFile(tempOutputPath, newFile, err => {
-							if (err) {
-								console.log(err);
-							}
-						})
-						const url = await generatePresignedUrl(s3, uuid, 'application/pdf');
-						const pushObject = await uploadFile(url, newFile)
-					})
-				});
-				*/
-		console.log('body is instance of readable');
 	}
 	else {
 		console.log('body is not instance of readable');
 	}
-
-
 },
 	{
 		connection: {
