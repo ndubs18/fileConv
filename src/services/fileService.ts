@@ -23,32 +23,34 @@ export class FileService {
 
 	async processFile(data: FileData) {
 		//TODO: Can we just set the state object and stringify it in request body??
-		//
-		console.log(data);
 		const { uuid, filename, sourceExt, targetExt } = data;
-
-		const response = await fetch('http://localhost:3000/process',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					uuid: uuid,
-					filename: filename,
-					sourceExt: sourceExt,
-					targetExt: targetExt
-				}),
-				headers: {
-					'Content-type': 'application/json'
-
-				}
-
-			})
-
-		return await response.json();
+		try {
+			const response = await fetch('http://localhost:3000/process',
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						uuid: uuid,
+						filename: filename,
+						sourceExt: sourceExt,
+						targetExt: targetExt
+					}),
+					headers: {
+						'Content-type': 'application/json'
+					}
+				})
+			return await response.json();
+		} catch (error) {
+			console.log(error)
+		}
 	}
 
 	async checkFileStatus(uuid: string) {
-		const response = await fetch(`http://localhost:3000/checkStatus?id=${uuid}`)
-		return response;
+		try {
+			const response = await fetch(`http://localhost:3000/checkStatus/${uuid}`)
+			return await response.json();
+		} catch (error) {
+			console.log(error);
+		}
 	}
 
 }

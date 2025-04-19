@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import Readable from 'node:stream'
 import libre from 'libreoffice-convert'
 import { pipeline } from 'stream/promises'
-import { Queue, Worker } from 'bullmq'
+import { Queue, Worker, Job } from 'bullmq'
 const conversionQueue = new Queue('conversion-queue');
 
 import {
@@ -82,6 +82,7 @@ app.post('/process', async (req, res) => {
 
 	await conversionQueue.add('fileConversion', req.body)
 
+
 	res.status(200).json({
 		status: 'success',
 		data: null,
@@ -108,6 +109,33 @@ const uploadFile = async (url: string, fileStream: Buffer) => {
 	}
 }
 
+app.get('/checkStatus/:uuid', async (req, res) => {
+	const uuid = req.params.uuid;
+
+	const file = await Document.findOne({ uuid: uuid })
+
+	if (file.status === 'complete') {
+		res.json({
+			status: 'success',
+			data: {
+				uuid: uuid,
+				downloadUrl: file.convertedUrl
+			},
+			message: 'complete'
+		})
+
+	} else {
+		res.json({
+			status: 'success',
+			data: {
+				uuid: uuid,
+			},
+			message: 'incomplete'
+		})
+	}
+
+})
+
 const worker = new Worker('conversion-queue', async job => {
 	const { uuid, filename, sourceExt, targetExt } = job.data;
 
@@ -130,6 +158,7 @@ const worker = new Worker('conversion-queue', async job => {
 	})
 	const response = await s3.send(getObjectCommand);
 	const localWriteStream = fs.createWriteStream(tempInputPath);
+
 	if (response.Body instanceof Readable) {
 		await pipeline(response.Body, localWriteStream);
 		try {
@@ -149,13 +178,13 @@ const worker = new Worker('conversion-queue', async job => {
 					Bucket: BUCKETNAME,
 					Key: `converted/${trimmedUuid}${targetExt}`
 				})
-				const getConvertedObectUrl = await getSignedUrl(s3, getConvertedObject)
-
-				await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: getConvertedObectUrl })
+				const convertedObectUrl = await getSignedUrl(s3, getConvertedObject)
+				let res = await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: convertedObectUrl })
+				//remove files from local file system
+				await fs.promises.unlink(tempInputPath);
+				//	await fs.promises.unlink(tempOutputPath);
 			})
-			//remove files from local file system
-			await fs.promises.unlink(tempInputPath);
-			await fs.promises.unlink(tempOutputPath);
+
 		} catch (error) {
 			console.log(error)
 		}
@@ -166,13 +195,14 @@ const worker = new Worker('conversion-queue', async job => {
 	}
 },
 	{
+		concurrency: 25,
 		connection: {
 			host: 'localhost',
 			port: 6379,
 		}
 	}
 )
-worker.on('completed', job => {
+worker.on('completed', (job) => {
 	console.log(`Job ${job.id} was completed`);
 })
 
