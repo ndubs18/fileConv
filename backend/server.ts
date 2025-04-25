@@ -52,7 +52,6 @@ app.post('/upload', upload.single('file'), async (req: Request, res: Response) =
 			secretAccessKey: SECRET_ACCESS_KEY
 		}
 	});
-
 	const { originalname, mimetype } = req.file;
 	//generate uuid
 	const ext = path.extname(originalname);
@@ -167,7 +166,6 @@ const worker = new Worker('conversion-queue', async job => {
 			//TODO: Let's wrap this callback in a promise
 			libre.convert(fileBuf, targetExt, undefined, async (error, newFile) => {
 				if (error) {
-					console.log(error);
 					return;
 				}
 				await fs.promises.writeFile(tempOutputPath, newFile)
@@ -182,7 +180,7 @@ const worker = new Worker('conversion-queue', async job => {
 				let res = await Document.findOneAndUpdate({ uuid: uuid }, { status: 'complete', convertedUrl: convertedObectUrl })
 				//remove files from local file system
 				await fs.promises.unlink(tempInputPath);
-				//	await fs.promises.unlink(tempOutputPath);
+				//await fs.promises.unlink(tempOutputPath);
 			})
 
 		} catch (error) {

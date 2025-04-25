@@ -1,19 +1,24 @@
 import * as React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, FormEvent } from 'react';
 import { FileService } from '../../services/FileService';
 
 let styles = {
 	form: {
+		display: 'flex',
+		flexDirection: 'column' as 'column',
+		alignItems: 'center',
 		margin: '0 auto',
 		position: 'relative' as 'relative',
 		top: '5rem',
-		width: '400px'
+		padding: '1rem'
 	},
 	selection: {
 		display: 'flex',
-		gap: '5rem',
 		justifyContent: 'center',
 		alignItems: 'center',
+	},
+	input: {
+		display: 'block'
 	},
 	submitBtn: {
 		display: 'block',
@@ -24,8 +29,9 @@ let styles = {
 	label: {
 		fontWeight: 'bold',
 		display: 'block',
-		padding: '1rem',
-		width: '10rem'
+		padding: '0 1rem',
+		textWrap: 'nowrap' as 'nowrap',
+		width: 'auto'
 	},
 	downloadLink: {
 		textDecoration: 'none',
@@ -34,24 +40,25 @@ let styles = {
 
 let UploadForm = () => {
 	const fileService = useRef(new FileService);
-	const [fileData, setFileData] = useState(null);
 	const [downloadUrl, setDownloadUrl] = useState(null)
 	const [processing, setProcessing] = useState(false);
 	const [error, setError] = useState(null);
 
-	let submitHandler = async (formData: FormData) => {
+	let submitHandler = async (e: FormEvent<HTMLFormElement>) => {
+		e.preventDefault()
+
 		try {
 			setProcessing(true);
 			//upload file
+			const formData = new FormData(e.currentTarget);
 			const uploadResponse = await fileService.current.uploadToS3(formData);
 			const data = uploadResponse.data;
-			setFileData(data);
 
 			//process file
 			const processingResponse = await fileService.current.processFile(data);
 			//if process was successful, check it it's done
 			if (processingResponse.status == 'success') {
-				//pole to see if the conversion is complete
+				//poll to see if the conversion is complete
 				const interval = setInterval(async () => {
 					const statusResponse = await fileService.current.checkFileStatus(data.uuid);
 					if (statusResponse.message === 'complete') {
@@ -61,7 +68,7 @@ let UploadForm = () => {
 						setDownloadUrl(statusResponse.data.downloadUrl);
 					}
 					else {
-						console.log(`Conversion is ${statusResponse.status}`);
+						console.log(`Conversion was ${statusResponse.status}`);
 					}
 				}, 3000)
 
@@ -77,12 +84,12 @@ let UploadForm = () => {
 	useEffect(() => {
 	}, [fileData, downloadUrl])
 	return (
-		<form style={styles.form} action={submitHandler}>
+		<form style={styles.form} onSubmit={submitHandler}>
 			<div id='selection' style={styles.selection}>
 				<label style={styles.label} htmlFor='fileUpload'>Upload a file:
-					<input type='file' id='fileUpload' accept='image/*, text/plain, ' name='file' />
+					<input style={styles.input} type='file' id='fileUpload' accept='image/*, text/plain, ' name='file' />
 				</label>
-				<label style={styles.label} htmlFor='targetType'> Convert to: <br />
+				<label style={{ ...styles.selection, ...styles.label }} htmlFor='targetType'> Convert to: <br />
 					<select id='targetType' name='targetType'>
 						<option value='.pdf'>pdf</option>
 						<option value='.jpg'>jpg</option>
@@ -90,7 +97,7 @@ let UploadForm = () => {
 					</select>
 				</label>
 			</div>
-			<button type='submit' style={styles.submitBtn}>CONVERT</button>
+			<button type='submit' style={styles.submitBtn} disabled={processing ? true : false}>CONVERT</button>
 			{processing && <p>Processing...</p>}
 			{downloadUrl ? <a style={styles.downloadLink} href={downloadUrl}>Download File</a> : <>{error}</>}
 		</form >
